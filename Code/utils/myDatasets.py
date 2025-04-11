@@ -3,8 +3,62 @@ import os
 import torch
 import torch.utils.data as data
 from torchvision import datasets, transforms
-from PIL import Image
+from PIL import ImageChops
+import os
+import nibabel as nib
+import torch
+from torch.utils.data import Dataset
+import numpy as np
 
+class MRAT1Dataset(Dataset):
+    def __init__(self, t1_folder, mra_folder, transform=None, target_shape=(256, 256, 150)):
+        self.t1_files = sorted([os.path.join(t1_folder, f) for f in os.listdir(t1_folder) if f.endswith('.nii.gz')])
+        self.mra_files = sorted([os.path.join(mra_folder, f) for f in os.listdir(mra_folder) if f.endswith('.nii.gz')])
+        self.transform = transform
+        self.target_shape = target_shape  # Target shape for all images
+
+    def __len__(self):
+        return len(self.t1_files)
+
+    def __getitem__(self, idx):
+        t1_path = self.t1_files[idx]
+        mra_path = self.mra_files[idx]
+
+        # Load NIfTI files
+        t1_img = nib.load(t1_path).get_fdata()
+        mra_img = nib.load(mra_path).get_fdata()
+
+        # Normalize to [0, 1]
+        t1_img = (t1_img - t1_img.min()) / (t1_img.max() - t1_img.min() + 1e-8)
+        mra_img = (mra_img - mra_img.min()) / (mra_img.max() - mra_img.min() + 1e-8)
+
+        # Resize or crop to target shape
+        t1_img = self.resize_or_crop(t1_img, self.target_shape)
+        mra_img = self.resize_or_crop(mra_img, self.target_shape)
+
+        # Convert to tensors
+        t1_tensor = torch.from_numpy(t1_img).float().unsqueeze(0)  # Add channel dimension
+        mra_tensor = torch.from_numpy(mra_img).float().unsqueeze(0)  # Add channel dimension
+
+        if self.transform:
+            t1_tensor = self.transform(t1_tensor)
+            mra_tensor = self.transform(mra_tensor)
+
+        return t1_tensor, mra_tensor
+
+    def resize_or_crop(self, img, target_shape):
+        """Resize or crop the image to the target shape."""
+        current_shape = img.shape
+        # Crop if the image is larger than the target shape
+        slices = [slice(0, min(current, target)) for current, target in zip(current_shape, target_shape)]
+        img = img[tuple(slices)]
+
+        # Pad if the image is smaller than the target shape
+        pad_width = [(0, max(0, target - current)) for current, target in zip(current_shape, target_shape)]
+        img = np.pad(img, pad_width, mode='constant', constant_values=0)
+
+        return img
+    
 IMG_EXTENSIONS = [
     '.jpg', '.JPG', '.jpeg', '.JPEG',
     '.png', '.PNG', '.ppm', '.PPM', '.bmp', '.BMP',
